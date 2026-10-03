@@ -93,7 +93,7 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;',
 // ▼ Firebase 콘솔 > 프로젝트 설정 > 내 앱(웹)의 설정값으로 교체하세요
 const firebaseConfig={
   apiKey:'YOUR-API-KEY',
-  authDomain:'suss-963ed.firebaseapp.com',
+ authDomain:'suss-963ed.firebaseapp.com',
   databaseURL:'https://suss-963ed-default-rtdb.asia-southeast1.firebasedatabase.app',
   projectId:'suss-963ed',
   appId:'1:455926225578:web:e17737ac59a00df6c90ed3'
@@ -132,23 +132,27 @@ function renderLB(){
 }
 const isOver=()=>ch.game_over()||!!(game&&game.result);
 
-// ⏱ 체스 시계 (팀당 시간) — 모드별 시간(초)은 여기서 바꾸세요
-const LIM={normal:300,blitz:180};
+// ⏱ 한 수당 제한 시간 — 모드별 시간(초)은 여기서 바꾸세요
+const LIM={normal:300,blitz:60};
 const lim=m=>LIM[m||'normal']*1000;
 const limMs=()=>lim(game&&game.mode);
 const srv=()=>Date.now()+off;
-function clockNow(){
-  const g=game,v={w:g.tw??limMs(),b:g.tb??limMs()};
-  if(g.ts&&!g.paused&&!isOver()){const c=ch.turn();v[c]=Math.max(0,v[c]-(srv()-g.ts))}
-  return v;
+function remMs(){
+  const g=game;
+  if(g.paused)return g.pr!=null?g.pr:limMs();
+  if(!g.ts)return limMs();
+  return Math.max(0,limMs()-(srv()-g.ts));
 }
-const fmt=ms=>{const t=Math.max(0,Math.ceil(ms/1000));return Math.floor(t/60)+':'+String(t%60).padStart(2,'0')};
+const fmt=ms=>{if(ms==null)return '-:--';const t=Math.max(0,Math.ceil(ms/1000));return Math.floor(t/60)+':'+String(t%60).padStart(2,'0')};
 function tick(){
   const el=$('clock');if(!game||!el)return;
-  const v=clockNow(),run=!!game.ts&&!game.paused&&!isOver(),c=ch.turn();
-  const box=(k,lab)=>'<div class="ck'+(run&&c===k?' run':'')+(v[k]<30000?' low':'')+'">'+lab+' <b>'+fmt(v[k])+'</b></div>';
-  el.innerHTML='<div style="text-align:center;font-size:12px;opacity:.7;margin-bottom:4px">⏱ '+(game.mode==='blitz'?'⚡ 블리츠':'🕐 일반')+' 모드 · 팀당 '+(limMs()/60000)+'분'+(game.ts?'':' · 첫 수를 두면 시계가 시작돼요')+'</div><div class="ckrow">'+box('w','⚪ 백')+box('b','⚫ 흑')+'</div>';
-  if(run&&v[c]<=0)flag(c);
+  const over=isOver(),run=!!game.ts&&!game.paused&&!over,c=ch.turn(),r=remMs();
+  const box=(k,lab)=>{
+    const mine=c===k&&!over,val=over?(game.tout===k?0:null):(mine?r:limMs());
+    return '<div class="ck'+(run&&mine?' run':'')+(mine&&val<Math.min(30000,limMs()/4)?' low':'')+'" style="'+(mine||over?'':'opacity:.55')+'">'+lab+' <b>'+fmt(val)+'</b></div>';
+  };
+  el.innerHTML='<div style="text-align:center;font-size:12px;opacity:.7;margin-bottom:4px">⏱ '+(game.mode==='blitz'?'⚡ 블리츠':'🕐 일반')+' 모드 · 한 수당 '+(limMs()/60000)+'분'+(game.ts?'':' · 첫 수를 두면 시계가 시작돼요')+'</div><div class="ckrow">'+box('w','⚪ 백')+box('b','⚫ 흑')+'</div>';
+  if(run&&r<=0)flag(c);
 }
 async function flag(c){
   if(flagging)return;flagging=true;
@@ -156,9 +160,8 @@ async function flag(c){
     if(!g)return g;
     if(g.result||g.paused||!g.ts)return;
     if(((g.log||[]).length%2?'b':'w')!==c)return;
-    const base=(c==='w'?g.tw:g.tb)??lim(g.mode);
-    if(base-(srv()-g.ts)>300)return;
-    const n={...g,result:c==='w'?'b':'w',tout:c};n['t'+c]=0;return n;
+    if(lim(g.mode)-(srv()-g.ts)>300)return;
+    return {...g,result:c==='w'?'b':'w',tout:c};
   })}catch(e){}
   setTimeout(()=>{flagging=false},1500);
 }
@@ -364,11 +367,9 @@ function click(sq){
 }
 function doMove(m){guard(async()=>{
   const c=ch.turn(),r=ch.move(m);if(!r)return;
-  ch.undo();if(clockNow()[c]<=0){toast('시간이 다 됐어요');return}busy=true;
+  ch.undo();if(game.ts&&remMs()<=0){toast('시간이 다 됐어요');return}busy=true;
   const entry={f:r.from,t:r.to,p:m.promotion||'',s:r.san,by:me.id,n:(players[me.id]||{}).name||me.name||'방장',c};
-  const T=srv(),bt={w:game.tw??limMs(),b:game.tb??limMs()};
-  if(game.ts)bt[c]=Math.max(0,bt[c]-(T-game.ts));
-  await call('game',{expectLen:(game.log||[]).length,patch:{log:[...(game.log||[]),entry],sub:{...(game.sub||{}),[c]:''},tw:bt.w,tb:bt.b,ts:T}});
+  await call('game',{expectLen:(game.log||[]).length,patch:{log:[...(game.log||[]),entry],sub:{...(game.sub||{}),[c]:''},ts:srv(),pr:null}});
 })}
 function askPromo(){
   const c=ch.turn(),box=$('promo').firstElementChild;box.innerHTML='';
@@ -379,14 +380,13 @@ function askPromo(){
 
 // ----- 액션 -----
 const pause=()=>guard(()=>{
-  const g=game;
-  if(g.paused)return call('game',{patch:{paused:false,ts:(g.log||[]).length?srv():null}});
-  const v=clockNow();
-  return call('game',{patch:{paused:true,tw:v.w,tb:v.b,ts:null}});
+  const g=game,started=(g.log||[]).length>0;
+  if(g.paused)return call('game',{patch:{paused:false,ts:started?srv()-(limMs()-(g.pr!=null?g.pr:limMs())):null,pr:null}});
+  return call('game',{patch:{paused:true,pr:g.ts?remMs():null}});
 });
-const undo=()=>{if(isOver()){toast('끝난 게임은 무를 수 없어요');return}guard(()=>{const L=game.log||[],n=L.length-1,p={log:L.slice(0,-1),sub:{w:'',b:''},ts:(n>0&&!game.paused)?srv():null};if(n<=0){p.tw=null;p.tb=null}return call('game',{patch:p})})};
+const undo=()=>{if(isOver()){toast('끝난 게임은 무를 수 없어요');return}guard(()=>{const L=game.log||[],n=L.length-1;return call('game',{patch:{log:L.slice(0,-1),sub:{w:'',b:''},ts:(n>0&&!game.paused)?srv():null,pr:null}})})};
 const resign=c=>{if(confirm((c==='w'?'백팀':'흑팀')+'이 항복할까요?'))guard(()=>call('game',{patch:{result:c==='w'?'b':'w'}}))};
-const resetGame=()=>{if(confirm('새 게임을 시작할까요? 기보가 초기화돼요.'))guard(()=>call('game',{patch:{log:[],paused:false,sub:{w:'',b:''},result:null,scored:null,scoreInfo:null,tout:null,tw:null,tb:null,ts:null}}))};
+const resetGame=()=>{if(confirm('새 게임을 시작할까요? 기보가 초기화돼요.'))guard(()=>call('game',{patch:{log:[],paused:false,sub:{w:'',b:''},result:null,scored:null,scoreInfo:null,tout:null,pr:null,ts:null,tw:null,tb:null}}))};
 const setTeam=(id,t)=>guard(()=>call('player',{pid:id,patch:{team:t,seq:Date.now()}}));
 const setAway=(id,v)=>guard(()=>call('player',{pid:id,patch:{away:v}}));
 const toggleAway=()=>setAway(me.id,!players[me.id].away);
