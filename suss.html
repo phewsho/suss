@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>그룹 체스 (온라인)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<style>
+:root{--bg:#f6f4ef;--fg:#222;--card:#fff;--line:#d9d4c8;--light:#f0d9b5;--dark:#b58863;--sel:#f6e05e;--hint:rgba(40,120,60,.55);--accent:#2f6f4f;--check:#e5534b;--warn:#b7791f;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1c1e;--fg:#eee;--card:#26282b;--line:#3a3d41;--accent:#5fb98b;--warn:#f0b955}}
+:root[data-theme="dark"]{--bg:#1b1c1e;--fg:#eee;--card:#26282b;--line:#3a3d41;--accent:#5fb98b;--warn:#f0b955}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;line-height:1.5}
+.wrap{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+input{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;background:var(--bg);color:var(--fg);margin:8px 0}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:disabled{opacity:.5}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent);width:100%;padding:12px;font-weight:700}
+button.warn{background:var(--warn);color:#fff;border-color:var(--warn);font-weight:700}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+#turn{font-size:17px;font-weight:700;text-align:center}
+#turn small{display:block;font-weight:400;font-size:13px;opacity:.75}
+#turn.paused{border-color:var(--warn);color:var(--warn)}
+#board{display:grid;grid-template-columns:repeat(8,1fr);width:100%;aspect-ratio:1;border:2px solid var(--line);border-radius:6px;overflow:hidden;user-select:none;margin-bottom:12px}
+.sq{display:flex;align-items:center;justify-content:center;font-size:min(8.5vw,46px);cursor:pointer;position:relative;line-height:1}
+.sq.l{background:var(--light)}.sq.d{background:var(--dark)}
+.sq.sel{background:var(--sel)!important}.sq.chk{background:var(--check)!important}
+.sq.hint::after{content:"";width:28%;height:28%;border-radius:50%;background:var(--hint);position:absolute}
+.sq.hint.cap::after{width:88%;height:88%;background:none;border:4px solid var(--hint)}
+.sq.last{box-shadow:inset 0 0 0 3px rgba(255,200,0,.7)}
+.w{color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 0 1px #000}.b{color:#111}
+.chip{display:inline-block;padding:3px 9px;margin:2px;border:1px solid var(--line);border-radius:99px;font-size:14px;cursor:default}
+.chip.me{border-color:var(--accent);font-weight:700}
+.chip.cur{background:var(--accent);color:#fff;border-color:var(--accent)}
+.chip.host{cursor:pointer}
+#log{font-size:14px;max-height:110px;overflow:auto}
+#promo{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:9}
+#promo div{background:var(--card);padding:16px;border-radius:12px;display:flex;gap:8px}
+#promo button{font-size:34px;padding:6px 12px}
+#toast{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));background:#333;color:#fff;padding:10px 14px;border-radius:10px;display:none;z-index:10;font-size:14px}
+small.d{opacity:.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>♟ 그룹 체스</h1>
+
+<div id="lobby">
+  <div class="card">
+    <p style="margin-top:0;font-size:14px">방 코드를 입력해 입장하세요. 처음 만든 사람이 <b>방장</b>이 됩니다. 같은 코드로 들어온 사람끼리 같은 판을 실시간으로 봅니다.</p>
+    <input id="nm" placeholder="내 이름" maxlength="12">
+    <input id="code" placeholder="방 코드 (영문/숫자, 예: lolchess)" maxlength="24">
+    <button class="primary" id="enter" onclick="enter()">입장</button>
+    <p id="lobby-msg" style="font-size:13px;color:var(--warn)"></p>
+    <small class="d">첫 입장 시 방이 자동으로 만들어지고, 판은 실시간으로 동기화돼요.</small>
+  </div>
+</div>
+
+<div id="game" style="display:none">
+  <div class="row" style="justify-content:space-between;align-items:center"><span>방 <b id="rn"></b></span><span id="hostname" class="d" style="font-size:13px"></span></div>
+  <div class="card" id="turn"></div>
+  <div id="board"></div>
+  <div class="row" id="ctl"></div>
+  <div class="card" id="people"></div>
+  <div class="card" id="menu" style="display:none"></div>
+  <div class="card"><b style="font-size:14px">기보</b><div id="log"></div></div>
+</div>
+</div>
+<div id="promo"><div></div></div>
+<div id="toast"></div>
+
+<script>
+const SYM={w:{p:'♙',n:'♘',b:'♗',r:'♖',q:'♕',k:'♔'},b:{p:'♟',n:'♞',b:'♝',r:'♜',q:'♛',k:'♚'}};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// ▼ Firebase 콘솔 > 프로젝트 설정 > 내 앱(웹)의 설정값으로 교체하세요
+const firebaseConfig={
+  apiKey:'YOUR-API-KEY',
+  authDomain:'suss-963ed.firebaseapp.com',
+  databaseURL:'https://suss-963ed-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId:'suss-963ed',
+  appId:'1:455926225578:web:e17737ac59a00df6c90ed3'
+};
+let me,room,R,lk='',game=null,players={},ch=new Chess(),sel=null,moves=[],manual=false,pend=null,menuFor=null,busy=false;
+
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display='none',3500)}
+async function guard(f){try{await f()}catch(e){busy=false;toast((e&&e.message)||'오류가 발생했어요')}}
+
+const notSet=()=>firebaseConfig.databaseURL.includes('YOUR-');
+if(notSet())$('lobby-msg').textContent='chess.html 맨 위 firebaseConfig를 본인 Firebase 설정값으로 바꿔주세요.';
+try{$('nm').value=localStorage.getItem('chessName')||''}catch(e){}
+function getId(){try{let i=localStorage.getItem('chessId');if(!i){i='p'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);localStorage.setItem('chessId',i)}return i}catch(e){return 'p'+Math.random().toString(36).slice(2,10)}}
+
+// 데이터 계층: 기존 화면 코드가 쓰는 call(op,x)를 Firebase로 구현
+async function call(op,x){
+  if(op==='join'){
+    await R.child('game').transaction(g=>g||{host:me.id,paused:false,sub:{w:'',b:''}});
+    const pr=R.child('players/'+me.id),s=await pr.get();
+    if(s.exists())await pr.update({name:x.name});
+    else await pr.set({name:x.name,team:'',away:false,seq:Date.now(),online:true});
+  }else if(op==='game'){
+    if(x.expectLen!=null){
+      const r=await R.child('game').transaction(g=>{if(!g)return g;if((g.log||[]).length!==x.expectLen)return;return {...g,...x.patch}});
+      if(!r.committed)throw new Error('다른 사람이 먼저 뒀어요. 판을 갱신할게요.');
+    }else await R.child('game').update(x.patch);
+  }else if(op==='player')await R.child('players/'+x.pid).update(x.patch);
+  else if(op==='kick')await R.child('players/'+x.pid).remove();
+}
+function onData(snap){
+  const v=snap.val()||{};
+  players={};Object.entries(v.players||{}).forEach(([i,p])=>{if(p&&p.name)players[i]=p});
+  game=v.game||null;
+  if(game){
+    game.log=game.log||[];game.sub=game.sub||{w:'',b:''};
+    const l=game.log,k=l.length+(l.length?l[l.length-1].s:'');
+    if(k!==lk){lk=k;rebuild()}
+    busy=false;render();
+  }
+}
+async function enter(){await guard(async()=>{
+  if(notSet())throw new Error('firebaseConfig가 설정되지 않았어요');
+  room=($('code').value.trim().replace(/[^A-Za-z0-9_-]/g,''))||'room1';
+  const name=$('nm').value.trim()||'손님';
+  try{localStorage.setItem('chessName',name)}catch(e){}
+  me={id:getId(),name};
+  firebase.initializeApp(firebaseConfig);
+  const fdb=firebase.database();R=fdb.ref('rooms/'+room);
+  R.on('value',onData);
+  await call('join',{name});
+  const on=R.child('players/'+me.id+'/online');
+  fdb.ref('.info/connected').on('value',s=>{if(s.val()){on.onDisconnect().set(false);on.set(true)}});
+  $('lobby').style.display='none';$('game').style.display='block';$('rn').textContent=room;
+})}
+const joinSelf=()=>call('join',{name:me.name});
+function rebuild(){
+  ch=new Chess();((game&&game.log)||[]).forEach(m=>ch.move({from:m.f,to:m.t,promotion:m.p||undefined}));
+  sel=null;moves=[];
+}
+
+// ----- 팀/차례 계산 -----
+function team(c){return Object.entries(players).filter(([i,p])=>p.team===c).map(([i,p])=>({id:i,...p})).sort((a,b)=>a.seq-b.seq)}
+function designated(c){
+  const l=team(c);if(!l.length)return null;
+  const mine=(game.log||[]).filter(m=>m.c===c);
+  const lastBy=mine.length?mine[mine.length-1].by:null;
+  const st=l.findIndex(x=>x.id===lastBy)+1;
+  for(let k=0;k<l.length;k++){const p=l[(st+k)%l.length];if(!p.away)return p}
+  return null;
+}
+function mayMove(){
+  if(!game||game.paused||ch.game_over())return false;
+  if(me.id===game.host)return true;
+  const c=ch.turn(),mp=players[me.id];
+  if(!mp||mp.team!==c||mp.away)return false;
+  const d=designated(c);
+  return !d||d.id===me.id||(game.sub||{})[c]===me.id;
+}
+
+// ----- 렌더 -----
+function render(){
+  if(!game)return;
+  const isHost=me.id===game.host,c=ch.turn(),over=ch.game_over(),mp=players[me.id];
+  $('hostname').textContent='방장: '+((players[game.host]||{}).name||'(없음)')+(isHost?' (나)':'');
+  // 배너
+  const t=$('turn');t.className='card'+(game.paused?' paused':'');
+  if(over){
+    let m='무승부';
+    if(ch.in_checkmate())m='체크메이트! '+(c==='w'?'⚫ 흑팀':'⚪ 백팀')+' 승리 🎉';
+    else if(ch.in_stalemate())m='스테일메이트 — 무승부';
+    t.innerHTML=m;
+  }else if(game.paused){
+    t.innerHTML='⏸ 일시정지 중<small>방장이 재개하면 이어서 둡니다 (큐 잡히는 동안 쉬어요)</small>';
+  }else{
+    const d=designated(c),sb=(game.sub||{})[c],sp=sb&&players[sb];
+    let who=sp?esc(sp.name)+' (대신 두는 중)':d?esc(d.name):'팀원 누구나';
+    t.innerHTML=(c==='w'?'⚪ 백팀':'⚫ 흑팀')+' · <span style="color:var(--accent)">'+who+'</span> 님 차례'+
+      '<small>'+(ch.in_check()?'⚠️ 체크! ':'')+(mayMove()?'👉 지금 내가 둘 수 있어요':'기다리는 중')+'</small>';
+  }
+  drawBoard();
+  // 컨트롤
+  const b=[];
+  if(isHost){
+    b.push('<button class="warn" onclick="pause()">'+(game.paused?'▶ 재개':'⏸ 큐 잡힘! (일시정지)')+'</button>');
+    b.push('<button onclick="undo()">↩ 무르기</button><button onclick="resetGame()">새 게임</button>');
+  }
+  if(mp&&mp.team&&!over&&!game.paused&&mp.team===c&&!mayMoveAsPlayer()){
+    b.push('<button onclick="claimSub()">🙋 대신 두기</button>');
+  }
+  if(mp&&(game.sub||{})[c]===me.id)b.push('<button onclick="claimSub(true)">대신 두기 취소</button>');
+  if(mp)b.push('<button onclick="toggleAway()">'+(mp.away?'✅ 복귀하기':'💤 자리 비움')+'</button>');
+  b.push('<button onclick="manual=!manual;drawBoard()">🔄 판 뒤집기</button>');
+  $('ctl').innerHTML=b.join('');
+  // 참가자
+  if(!mp){$('people').innerHTML='내보내졌거나 입장 정보가 없어요. <button onclick="guard(joinSelf)">다시 입장</button>';}
+  else{
+    const dc=over?null:designated(c);
+    const chip=p=>{
+      const on=!!p.online;
+      return '<span class="chip'+(p.id===me.id?' me':'')+(dc&&dc.id===p.id&&!game.paused?' cur':'')+(isHost?' host':'')+'" '+(isHost?'onclick="menuFor=\''+p.id+'\';renderMenu()"':'')+'>'+
+        (on?'🟢':'⚫')+' '+esc(p.name)+(p.id===game.host?' ★':'')+(p.away?' 💤':'')+'</span>';
+    };
+    const sect=(lab,l)=>'<div style="margin-bottom:6px"><b style="font-size:14px">'+lab+'</b> '+(l.length?l.map(chip).join(''):'<small class="d">없음</small>')+'</div>';
+    const spec=Object.entries(players).filter(([i,p])=>!p.team).map(([i,p])=>({id:i,...p}));
+    $('people').innerHTML=sect('⚪ 백팀',team('w'))+sect('⚫ 흑팀',team('b'))+sect('👀 관전',spec)+
+      '<div class="row" style="margin:8px 0 0"><button onclick="setTeam(\''+me.id+'\',\'w\')">⚪ 백팀 참가</button><button onclick="setTeam(\''+me.id+'\',\'b\')">⚫ 흑팀 참가</button><button onclick="setTeam(\''+me.id+'\',\'\')">👀 관전</button></div>'+
+      '<small class="d">팀원은 순서대로 돌아가며 한 수씩 둬요. 💤 자리 비움인 사람은 건너뜁니다. 🎯 초록색 = 이번 차례</small>';
+  }
+  renderMenu();
+  const h=game.log||[];
+  $('log').innerHTML=h.length?h.map((m,i)=>(i%2?'':(i/2+1)+'. ')+esc(m.s)+' <span style="opacity:.5">('+esc(m.n)+')</span>').join('  '):'<small class="d">아직 수가 없습니다</small>';
+  $('log').scrollTop=1e5;
+}
+function mayMoveAsPlayer(){ // 방장 예외 없이 팀원으로서 둘 수 있는지
+  const c=ch.turn(),mp=players[me.id];if(!mp||mp.team!==c||mp.away)return false;
+  const d=designated(c);return !d||d.id===me.id||(game.sub||{})[c]===me.id;
+}
+function renderMenu(){
+  const m=$('menu');
+  if(!game||me.id!==game.host||!menuFor||!players[menuFor]){m.style.display='none';return}
+  const p=players[menuFor],i=menuFor;
+  m.style.display='block';
+  m.innerHTML='<b>'+esc(p.name)+'</b> <small class="d">방장 메뉴</small><div class="row" style="margin-top:8px">'+
+    '<button onclick="setAway(\''+i+'\',true)">💤 자리 비움</button><button onclick="setAway(\''+i+'\',false)">✅ 복귀</button>'+
+    '<button onclick="setTeam(\''+i+'\',\'w\')">⚪ 백팀으로</button><button onclick="setTeam(\''+i+'\',\'b\')">⚫ 흑팀으로</button>'+
+    '<button onclick="setTeam(\''+i+'\',\'\')">👀 관전으로</button>'+
+    (i!==me.id?'<button onclick="giveHost(\''+i+'\')">★ 방장 넘기기</button><button onclick="kick(\''+i+'\')">🚪 내보내기</button>':'')+
+    '<button onclick="menuFor=null;renderMenu()">닫기</button></div>';
+}
+function drawBoard(){
+  const bd=ch.board(),el=$('board');el.innerHTML='';
+  const mp=players[me.id],blackBottom=((mp&&mp.team==='b')!==manual);
+  const h=ch.history({verbose:true}),last=h[h.length-1];
+  let ks=null;
+  if(ch.in_check())for(let r=0;r<8;r++)for(let c=0;c<8;c++){const p=bd[r][c];if(p&&p.type==='k'&&p.color===ch.turn())ks='abcdefgh'[c]+(8-r)}
+  for(let i=0;i<64;i++){
+    const r=blackBottom?7-Math.floor(i/8):Math.floor(i/8),c=blackBottom?7-i%8:i%8;
+    const sq='abcdefgh'[c]+(8-r),p=bd[r][c],d=document.createElement('div');
+    let cls='sq '+((r+c)%2?'d':'l');
+    if(sel===sq)cls+=' sel';
+    if(sq===ks)cls+=' chk';
+    if(last&&(sq===last.from||sq===last.to))cls+=' last';
+    if(moves.find(x=>x.to===sq))cls+=' hint'+(p?' cap':'');
+    d.className=cls;
+    if(p)d.innerHTML='<span class="'+p.color+'">'+SYM[p.color][p.type]+'</span>';
+    d.onclick=()=>click(sq);el.appendChild(d);
+  }
+}
+
+// ----- 수 두기 -----
+function click(sq){
+  if(busy||!mayMove())return;
+  const m=moves.filter(x=>x.to===sq);
+  if(sel&&m.length){
+    if(m[0].promotion){pend={from:sel,to:sq};askPromo();return}
+    doMove({from:sel,to:sq});return;
+  }
+  const p=ch.get(sq);
+  if(p&&p.color===ch.turn()){sel=sq;moves=ch.moves({square:sq,verbose:true})}else{sel=null;moves=[]}
+  drawBoard();
+}
+function doMove(m){guard(async()=>{
+  const c=ch.turn(),r=ch.move(m);if(!r)return;
+  ch.undo();busy=true;
+  const entry={f:r.from,t:r.to,p:m.promotion||'',s:r.san,by:me.id,n:(players[me.id]||{}).name||me.name||'방장',c};
+  await call('game',{expectLen:(game.log||[]).length,patch:{log:[...(game.log||[]),entry],sub:{...(game.sub||{}),[c]:''}}});
+})}
+function askPromo(){
+  const c=ch.turn(),box=$('promo').firstElementChild;box.innerHTML='';
+  ['q','r','b','n'].forEach(t=>{const b=document.createElement('button');b.innerHTML='<span class="'+c+'">'+SYM[c][t]+'</span>';
+    b.onclick=()=>{$('promo').style.display='none';doMove({...pend,promotion:t})};box.appendChild(b)});
+  $('promo').style.display='flex';
+}
+
+// ----- 액션 -----
+const pause=()=>guard(()=>call('game',{patch:{paused:!game.paused}}));
+const undo=()=>guard(()=>call('game',{patch:{log:(game.log||[]).slice(0,-1),sub:{w:'',b:''}}}));
+const resetGame=()=>{if(confirm('새 게임을 시작할까요? 기보가 초기화돼요.'))guard(()=>call('game',{patch:{log:[],paused:false,sub:{w:'',b:''}}}))};
+const setTeam=(id,t)=>guard(()=>call('player',{pid:id,patch:{team:t,seq:Date.now()}}));
+const setAway=(id,v)=>guard(()=>call('player',{pid:id,patch:{away:v}}));
+const toggleAway=()=>setAway(me.id,!players[me.id].away);
+const giveHost=id=>{if(confirm('방장을 넘길까요?'))guard(async()=>{await call('game',{patch:{host:id}});menuFor=null;render()})};
+const kick=id=>{if(confirm('내보낼까요?'))guard(async()=>{await call('kick',{pid:id});menuFor=null;render()})};
+const claimSub=cancel=>guard(()=>call('game',{patch:{sub:{...(game.sub||{}),[ch.turn()]:cancel?'':me.id}}}));
+</script>
+</body>
+</html>
