@@ -43,6 +43,10 @@ button.warn{background:var(--warn);color:#fff;border-color:var(--warn);font-weig
 .mv{display:inline-block;padding:1px 8px;margin:1px 2px;border-radius:6px;border:1px solid #888;font-size:13px;line-height:1.6}
 .mv.mw{background:#fff;color:#111}.mv.mb{background:#222;color:#fff}
 .mv small{opacity:.6;margin-left:2px}
+.ckrow{display:flex;gap:8px}
+.ck{flex:1;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;font-size:16px}
+.ck.run{border-color:var(--accent);background:var(--accent);color:#fff}
+.ck.low b{color:var(--check)}.ck.run.low b{color:#ffe08a}
 #promo{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:9}
 #promo div{background:var(--card);padding:16px;border-radius:12px;display:flex;gap:8px}
 #promo button{font-size:34px;padding:6px 12px}
@@ -69,6 +73,7 @@ small.d{opacity:.7}
 
 <div id="game" style="display:none">
   <div class="row" style="justify-content:space-between;align-items:center"><span>방 <b id="rn"></b></span><span id="hostname" class="d" style="font-size:13px"></span></div>
+  <div class="card" id="clock"></div>
   <div class="card" id="turn"></div>
   <div id="board"></div>
   <div class="row" id="ctl"></div>
@@ -112,8 +117,10 @@ const TIERS=[[1700,'👑 마스터'],[1500,'💎 다이아'],[1350,'🔷 플래�
 const tier=v=>TIERS.find(t=>v>=t[0])[1];
 const sc=n=>(lb[nk(n)]||{}).score??1000;
 const tierIcon=n=>tier(sc(n)).split(' ')[0];
+let off=0,flagging=false;
 if(!notSet()){
   firebase.initializeApp(firebaseConfig);fdb=firebase.database();
+  fdb.ref('.info/serverTimeOffset').on('value',s=>{off=s.val()||0});
   fdb.ref('leaderboard').on('value',s=>{lb=s.val()||{};renderLB();if(game)render()});
 }
 function renderLB(){
@@ -124,6 +131,39 @@ function renderLB(){
   ['lb1','lb2'].forEach(i=>{const e=$(i);if(e)e.innerHTML=h});
 }
 const isOver=()=>ch.game_over()||!!(game&&game.result);
+
+// ⏱ 체스 시계 (팀당 시간) — 모드별 시간(초)은 여기서 바꾸세요
+const LIM={normal:300,blitz:180};
+const lim=m=>LIM[m||'normal']*1000;
+const limMs=()=>lim(game&&game.mode);
+const srv=()=>Date.now()+off;
+function clockNow(){
+  const g=game,v={w:g.tw??limMs(),b:g.tb??limMs()};
+  if(g.ts&&!g.paused&&!isOver()){const c=ch.turn();v[c]=Math.max(0,v[c]-(srv()-g.ts))}
+  return v;
+}
+const fmt=ms=>{const t=Math.max(0,Math.ceil(ms/1000));return Math.floor(t/60)+':'+String(t%60).padStart(2,'0')};
+function tick(){
+  const el=$('clock');if(!game||!el)return;
+  const v=clockNow(),run=!!game.ts&&!game.paused&&!isOver(),c=ch.turn();
+  const box=(k,lab)=>'<div class="ck'+(run&&c===k?' run':'')+(v[k]<30000?' low':'')+'">'+lab+' <b>'+fmt(v[k])+'</b></div>';
+  el.innerHTML='<div style="text-align:center;font-size:12px;opacity:.7;margin-bottom:4px">⏱ '+(game.mode==='blitz'?'⚡ 블리츠':'🕐 일반')+' 모드 · 팀당 '+(limMs()/60000)+'분'+(game.ts?'':' · 첫 수를 두면 시계가 시작돼요')+'</div><div class="ckrow">'+box('w','⚪ 백')+box('b','⚫ 흑')+'</div>';
+  if(run&&v[c]<=0)flag(c);
+}
+async function flag(c){
+  if(flagging)return;flagging=true;
+  try{await R.child('game').transaction(g=>{
+    if(!g)return g;
+    if(g.result||g.paused||!g.ts)return;
+    if(((g.log||[]).length%2?'b':'w')!==c)return;
+    const base=(c==='w'?g.tw:g.tb)??lim(g.mode);
+    if(base-(srv()-g.ts)>300)return;
+    const n={...g,result:c==='w'?'b':'w',tout:c};n['t'+c]=0;return n;
+  })}catch(e){}
+  setTimeout(()=>{flagging=false},1500);
+}
+const setMode=m=>guard(()=>call('game',{patch:{mode:m}}));
+setInterval(tick,250);
 function outcome(){if(game.result)return game.result;if(ch.in_checkmate())return ch.turn()==='w'?'b':'w';return 'd'}
 function scoreText(){const i=game.scoreInfo;if(i==='skip')return '수가 너무 적어 점수는 반영되지 않았어요';if(i==='solo')return '혼자서(한 사람이 양쪽을) 둔 판은 점수에 반영되지 않아요';if(!i)return '점수 계산 중…';return '점수 '+i.map(x=>esc(x.n)+' '+(x.d>=0?'+':'')+x.d+' ('+(x.m||0)+'수)').join(' · ')}
 async function maybeScore(){
@@ -228,7 +268,7 @@ function render(){
   const t=$('turn');t.className='card'+(game.paused?' paused':'');
   if(over){
     const o=outcome();
-    const m=o==='d'?(ch.in_stalemate()?'스테일메이트 — 무승부':'무승부'):(game.result?'항복! ':'체크메이트! ')+(o==='w'?'⚪ 백팀':'⚫ 흑팀')+' 승리 🎉';
+    const m=o==='d'?(ch.in_stalemate()?'스테일메이트 — 무승부':'무승부'):(game.tout?'시간 초과! ':game.result?'항복! ':'체크메이트! ')+(o==='w'?'⚪ 백팀':'⚫ 흑팀')+' 승리 🎉';
     t.innerHTML=m+'<small>'+scoreText()+'</small>';
   }else if(game.paused){
     t.innerHTML='⏸ 일시정지 중<small>방장이 재개하면 이어서 둡니다 (큐 잡히는 동안 쉬어요)</small>';
@@ -242,6 +282,7 @@ function render(){
   // 컨트롤
   const b=[];
   if(isHost){
+    if(!(game.log||[]).length)b.push(['normal','blitz'].map(m=>'<button'+((game.mode||'normal')===m?' class="primary" style="width:auto;padding:7px 12px"':'')+' onclick="setMode(\''+m+'\')">'+(m==='blitz'?'⚡ 블리츠 '+LIM.blitz/60+'분':'🕐 일반 '+LIM.normal/60+'분')+'</button>').join(''));
     b.push('<button class="warn" onclick="pause()">'+(game.paused?'▶ 재개':'⏸ 큐 잡힘! (일시정지)')+'</button>');
     b.push('<button onclick="undo()">↩ 무르기</button><button onclick="resetGame()">새 게임</button>');
     if(!over)b.push('<button onclick="resign(\'w\')">🏳 백 항복</button><button onclick="resign(\'b\')">🏳 흑 항복</button>');
@@ -271,7 +312,7 @@ function render(){
   renderMenu();
   const h=game.log||[];
   $('log').innerHTML=h.length?h.map((m,i)=>(m.c==='w'?'<span style="opacity:.6;margin-left:4px">'+(Math.floor(i/2)+1)+'.</span>':'')+'<span class="mv m'+m.c+'">'+(m.c==='w'?'⚪':'⚫')+' '+esc(m.s)+' <small>'+esc(m.n)+'</small></span>').join(''):'<small class="d">아직 수가 없습니다</small>';
-  $('log').scrollTop=1e5;
+  $('log').scrollTop=1e5;tick();
 }
 function mayMoveAsPlayer(){ // 방장 예외 없이 팀원으로서 둘 수 있는지
   const c=ch.turn(),mp=players[me.id];if(!mp||mp.team!==c||mp.away)return false;
@@ -323,9 +364,11 @@ function click(sq){
 }
 function doMove(m){guard(async()=>{
   const c=ch.turn(),r=ch.move(m);if(!r)return;
-  ch.undo();busy=true;
+  ch.undo();if(clockNow()[c]<=0){toast('시간이 다 됐어요');return}busy=true;
   const entry={f:r.from,t:r.to,p:m.promotion||'',s:r.san,by:me.id,n:(players[me.id]||{}).name||me.name||'방장',c};
-  await call('game',{expectLen:(game.log||[]).length,patch:{log:[...(game.log||[]),entry],sub:{...(game.sub||{}),[c]:''}}});
+  const T=srv(),bt={w:game.tw??limMs(),b:game.tb??limMs()};
+  if(game.ts)bt[c]=Math.max(0,bt[c]-(T-game.ts));
+  await call('game',{expectLen:(game.log||[]).length,patch:{log:[...(game.log||[]),entry],sub:{...(game.sub||{}),[c]:''},tw:bt.w,tb:bt.b,ts:T}});
 })}
 function askPromo(){
   const c=ch.turn(),box=$('promo').firstElementChild;box.innerHTML='';
@@ -335,10 +378,15 @@ function askPromo(){
 }
 
 // ----- 액션 -----
-const pause=()=>guard(()=>call('game',{patch:{paused:!game.paused}}));
-const undo=()=>{if(isOver()){toast('끝난 게임은 무를 수 없어요');return}guard(()=>call('game',{patch:{log:(game.log||[]).slice(0,-1),sub:{w:'',b:''}}}))};
+const pause=()=>guard(()=>{
+  const g=game;
+  if(g.paused)return call('game',{patch:{paused:false,ts:(g.log||[]).length?srv():null}});
+  const v=clockNow();
+  return call('game',{patch:{paused:true,tw:v.w,tb:v.b,ts:null}});
+});
+const undo=()=>{if(isOver()){toast('끝난 게임은 무를 수 없어요');return}guard(()=>{const L=game.log||[],n=L.length-1,p={log:L.slice(0,-1),sub:{w:'',b:''},ts:(n>0&&!game.paused)?srv():null};if(n<=0){p.tw=null;p.tb=null}return call('game',{patch:p})})};
 const resign=c=>{if(confirm((c==='w'?'백팀':'흑팀')+'이 항복할까요?'))guard(()=>call('game',{patch:{result:c==='w'?'b':'w'}}))};
-const resetGame=()=>{if(confirm('새 게임을 시작할까요? 기보가 초기화돼요.'))guard(()=>call('game',{patch:{log:[],paused:false,sub:{w:'',b:''},result:null,scored:null,scoreInfo:null}}))};
+const resetGame=()=>{if(confirm('새 게임을 시작할까요? 기보가 초기화돼요.'))guard(()=>call('game',{patch:{log:[],paused:false,sub:{w:'',b:''},result:null,scored:null,scoreInfo:null,tout:null,tw:null,tb:null,ts:null}}))};
 const setTeam=(id,t)=>guard(()=>call('player',{pid:id,patch:{team:t,seq:Date.now()}}));
 const setAway=(id,v)=>guard(()=>call('player',{pid:id,patch:{away:v}}));
 const toggleAway=()=>setAway(me.id,!players[me.id].away);
