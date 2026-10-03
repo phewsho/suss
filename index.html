@@ -52,16 +52,6 @@ button.warn{background:var(--warn);color:#fff;border-color:var(--warn);font-weig
 #promo button{font-size:34px;padding:6px 12px}
 #toast{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));background:#333;color:#fff;padding:10px 14px;border-radius:10px;display:none;z-index:10;font-size:14px}
 small.d{opacity:.7}
-#clock,#turn{padding:8px 10px;margin-bottom:8px}
-#board{margin-left:auto;margin-right:auto}
-#lobby{max-width:560px;margin:0 auto}
-@media (min-width:900px){
-  .wrap{max-width:1100px}
-  #game{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}
-  .gl,.gr{min-width:0}
-  .gl{position:sticky;top:8px}
-  #board{width:min(100%,max(320px,calc(100vh - 250px)))}
-}
 </style>
 </head>
 <body>
@@ -82,19 +72,15 @@ small.d{opacity:.7}
 </div>
 
 <div id="game" style="display:none">
-  <div class="gl">
   <div class="row" style="justify-content:space-between;align-items:center"><span>방 <b id="rn"></b></span><span id="hostname" class="d" style="font-size:13px"></span></div>
   <div class="card" id="clock"></div>
   <div class="card" id="turn"></div>
   <div id="board"></div>
   <div class="row" id="ctl"></div>
-  </div>
-  <div class="gr">
   <div class="card" id="people"></div>
   <div class="card" id="lb2"></div>
   <div class="card" id="menu" style="display:none"></div>
   <div class="card"><b style="font-size:14px">기보</b><div id="log"></div></div>
-  </div>
 </div>
 </div>
 <div id="promo"><div></div></div>
@@ -249,7 +235,7 @@ async function enter(){await guard(async()=>{
   await call('join',{name});
   const on=R.child('players/'+me.id+'/online');
   fdb.ref('.info/connected').on('value',s=>{if(s.val()){on.onDisconnect().set(false);on.set(true)}});
-  $('lobby').style.display='none';$('game').style.display='';$('rn').textContent=room;
+  $('lobby').style.display='none';$('game').style.display='block';$('rn').textContent=room;
 })}
 const joinSelf=()=>call('join',{name:me.name});
 function rebuild(){
