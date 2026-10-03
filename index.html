@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>그룹 체스 (온라인)</title>
+<title>그룹 X스 (온라인)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
@@ -93,7 +93,7 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;',
 // ▼ Firebase 콘솔 > 프로젝트 설정 > 내 앱(웹)의 설정값으로 교체하세요
 const firebaseConfig={
   apiKey:'YOUR-API-KEY',
- authDomain:'suss-963ed.firebaseapp.com',
+  authDomain:'suss-963ed.firebaseapp.com',
   databaseURL:'https://suss-963ed-default-rtdb.asia-southeast1.firebasedatabase.app',
   projectId:'suss-963ed',
   appId:'1:455926225578:web:e17737ac59a00df6c90ed3'
@@ -247,6 +247,7 @@ function rebuild(){
 function team(c){return Object.entries(players).filter(([i,p])=>p.team===c).map(([i,p])=>({id:i,...p})).sort((a,b)=>a.seq-b.seq)}
 function designated(c){
   const l=team(c);if(!l.length)return null;
+  if(game.format==='duel')return l[0];
   const mine=(game.log||[]).filter(m=>m.c===c);
   const lastBy=mine.length?mine[mine.length-1].by:null;
   const st=l.findIndex(x=>x.id===lastBy)+1;
@@ -255,9 +256,12 @@ function designated(c){
 }
 function mayMove(){
   if(!game||game.paused||isOver())return false;
-  if(me.id===game.host)return true;
+  const duel=game.format==='duel';
+  if(me.id===game.host&&!duel)return true;
   const c=ch.turn(),mp=players[me.id];
-  if(!mp||mp.team!==c||mp.away)return false;
+  if(!mp||mp.team!==c)return false;
+  if(duel)return true;
+  if(mp.away)return false;
   const d=designated(c);
   return !d||d.id===me.id||(game.sub||{})[c]===me.id;
 }
@@ -266,7 +270,7 @@ function mayMove(){
 function render(){
   if(!game)return;
   const isHost=me.id===game.host,c=ch.turn(),over=isOver(),mp=players[me.id];
-  $('hostname').textContent='방장: '+((players[game.host]||{}).name||'(없음)')+(isHost?' (나)':'');
+  $('hostname').textContent='방장: '+((players[game.host]||{}).name||'(없음)')+(isHost?' (나)':'')+' · '+(game.format==='duel'?'⚔️ 1:1 (나머지는 관전)':'👥 그룹');
   // 배너
   const t=$('turn');t.className='card'+(game.paused?' paused':'');
   if(over){
@@ -285,17 +289,18 @@ function render(){
   // 컨트롤
   const b=[];
   if(isHost){
+    if(!(game.log||[]).length)b.push(['group','duel'].map(m=>'<button'+((game.format||'group')===m?' class="primary" style="width:auto;padding:7px 12px"':'')+' onclick="setFormat(\''+m+'\')">'+(m==='duel'?'⚔️ 1:1':'👥 그룹')+'</button>').join(''));
     if(!(game.log||[]).length)b.push(['normal','blitz'].map(m=>'<button'+((game.mode||'normal')===m?' class="primary" style="width:auto;padding:7px 12px"':'')+' onclick="setMode(\''+m+'\')">'+(m==='blitz'?'⚡ 블리츠 '+LIM.blitz/60+'분':'🕐 일반 '+LIM.normal/60+'분')+'</button>').join(''));
     b.push('<button class="warn" onclick="pause()">'+(game.paused?'▶ 재개':'⏸ 큐 잡힘! (일시정지)')+'</button>');
     b.push('<button onclick="undo()">↩ 무르기</button><button onclick="resetGame()">새 게임</button>');
     if(!over)b.push('<button onclick="resign(\'w\')">🏳 백 항복</button><button onclick="resign(\'b\')">🏳 흑 항복</button>');
   }
-  if(mp&&mp.team&&!over&&!game.paused&&mp.team===c&&!mayMoveAsPlayer()){
+  if(mp&&mp.team&&!over&&!game.paused&&mp.team===c&&game.format!=='duel'&&!mayMoveAsPlayer()){
     b.push('<button onclick="claimSub()">🙋 대신 두기</button>');
   }
   if(mp&&(game.sub||{})[c]===me.id)b.push('<button onclick="claimSub(true)">대신 두기 취소</button>');
   if(mp&&mp.team&&!over&&!isHost)b.push('<button onclick="resign(\''+mp.team+'\')">🏳 우리 팀 항복</button>');
-  if(mp)b.push('<button onclick="toggleAway()">'+(mp.away?'✅ 복귀하기':'💤 자리 비움')+'</button>');
+  if(mp&&game.format!=='duel')b.push('<button onclick="toggleAway()">'+(mp.away?'✅ 복귀하기':'💤 자리 비움')+'</button>');
   b.push('<button onclick="manual=!manual;drawBoard()">🔄 판 뒤집기</button>');
   $('ctl').innerHTML=b.join('');
   // 참가자
@@ -329,8 +334,8 @@ function renderMenu(){
   m.style.display='block';
   m.innerHTML='<b>'+esc(p.name)+'</b> <small class="d">방장 메뉴</small><div class="row" style="margin-top:8px">'+
     '<button onclick="setAway(\''+i+'\',true)">💤 자리 비움</button><button onclick="setAway(\''+i+'\',false)">✅ 복귀</button>'+
-    '<button onclick="setTeam(\''+i+'\',\'w\')">⚪ 백팀으로</button><button onclick="setTeam(\''+i+'\',\'b\')">⚫ 흑팀으로</button>'+
-    '<button onclick="setTeam(\''+i+'\',\'\')">👀 관전으로</button>'+
+    '<button onclick="setTeam(\''+i+'\',\'w\',true)">⚪ 백팀으로</button><button onclick="setTeam(\''+i+'\',\'b\',true)">⚫ 흑팀으로</button>'+
+    '<button onclick="setTeam(\''+i+'\',\'\',true)">👀 관전으로</button>'+
     (i!==me.id?'<button onclick="giveHost(\''+i+'\')">★ 방장 넘기기</button><button onclick="kick(\''+i+'\')">🚪 내보내기</button>':'')+
     '<button onclick="menuFor=null;renderMenu()">닫기</button></div>';
 }
@@ -387,8 +392,18 @@ const pause=()=>guard(()=>{
 });
 const undo=()=>{if(isOver()){toast('끝난 게임은 무를 수 없어요');return}guard(()=>{const L=game.log||[],n=L.length-1;return call('game',{patch:{log:L.slice(0,-1),sub:{w:'',b:''},ts:(n>0&&!game.paused)?srv():null,pr:null}})})};
 const resign=c=>{if(confirm((c==='w'?'백팀':'흑팀')+'이 항복할까요? 팀 전체가 패배로 처리돼요.'))guard(()=>call('game',{patch:{result:c==='w'?'b':'w'}}))};
-const resetGame=()=>{if(confirm('새 게임을 시작할까요? 기보가 초기화돼요.'))guard(()=>call('game',{patch:{log:[],paused:false,sub:{w:'',b:''},result:null,scored:null,scoreInfo:null,tout:null,pr:null,ts:null,tw:null,tb:null}}))};
-const setTeam=(id,t)=>guard(()=>call('player',{pid:id,patch:{team:t,seq:Date.now()}}));
+const resetGame=()=>{if(confirm('새 게임을 시작할까요? 기보가 초기화되고 팀 선택도 풀려요.'))guard(async()=>{await call('game',{patch:{log:[],paused:false,sub:{w:'',b:''},result:null,scored:null,scoreInfo:null,tout:null,pr:null,ts:null,tw:null,tb:null}});for(const id of Object.keys(players))await call('player',{pid:id,patch:{side:null}})})};
+const setTeam=(id,t,force)=>{
+  const p=players[id],cur=p&&(p.side||p.team);
+  if(!force&&t&&cur&&cur!==t){toast('한 번 고른 팀은 바꿀 수 없어요. 관전으로만 갈 수 있어요. (바꾸려면 방장에게 요청하세요)');return}
+  if(t&&game.format==='duel'&&team(t).some(q=>q.id!==id)){toast('1:1 모드는 팀당 1명만 참가할 수 있어요. 나머지는 관전만 가능해요.');return}
+  const patch={team:t,seq:Date.now()};if(t)patch.side=t;
+  guard(()=>call('player',{pid:id,patch}));
+};
+const setFormat=m=>{
+  if(m==='duel'&&(team('w').length>1||team('b').length>1)){toast('팀당 1명으로 줄여야 1:1로 바꿀 수 있어요. 참가자 이름을 눌러 관전으로 옮겨주세요.');return}
+  guard(()=>call('game',{patch:{format:m}}));
+};
 const setAway=(id,v)=>guard(()=>call('player',{pid:id,patch:{away:v}}));
 const toggleAway=()=>setAway(me.id,!players[me.id].away);
 const giveHost=id=>{if(confirm('방장을 넘길까요?'))guard(async()=>{await call('game',{patch:{host:id}});menuFor=null;render()})};
